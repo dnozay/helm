@@ -17,6 +17,7 @@ limitations under the License.
 package chartutil
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/mitchellh/copystructure"
@@ -118,7 +119,8 @@ func coalesceGlobals(dest, src map[string]interface{}) {
 				} else {
 					// Basically, we reverse order of coalesce here to merge
 					// top-down.
-					CoalesceTables(vv, destvmap)
+					prefix := fmt.Sprintf("%s.", key)
+					coalesceTablesFullKey(vv, destvmap, prefix)
 					dg[key] = vv
 					continue
 				}
@@ -157,12 +159,13 @@ func coalesceValues(c *chart.Chart, v map[string]interface{}) {
 				// if v[key] is a table, merge nv's val table into v[key].
 				src, ok := val.(map[string]interface{})
 				if !ok {
-					log.Printf("warning: skipped value for %s: Not a table.", key)
+					log.Printf("warning: skipped value for %s.%s: Not a table.", c.Metadata.Name, key)
 					continue
 				}
 				// Because v has higher precedence than nv, dest values override src
 				// values.
-				CoalesceTables(dest, src)
+				prefix := fmt.Sprintf("%s.%s.", c.Metadata.Name, key)
+				coalesceTablesFullKey(dest, src, prefix)
 			}
 		} else {
 			// If the key is not in v, copy it from nv.
@@ -175,6 +178,13 @@ func coalesceValues(c *chart.Chart, v map[string]interface{}) {
 //
 // dest is considered authoritative.
 func CoalesceTables(dst, src map[string]interface{}) map[string]interface{} {
+	return coalesceTablesFullKey(dst, src, "")
+}
+
+// coalesceTablesFullKey merges a source map into a destination map.
+//
+// dest is considered authoritative.
+func coalesceTablesFullKey(dst, src map[string]interface{}, prefix string) map[string]interface{} {
 	// When --reuse-values is set but there are no modifications yet, return new values
 	if src == nil {
 		return dst
@@ -185,18 +195,20 @@ func CoalesceTables(dst, src map[string]interface{}) map[string]interface{} {
 	// Because dest has higher precedence than src, dest values override src
 	// values.
 	for key, val := range src {
+		fullkey := fmt.Sprintf("%s%s", prefix, key)
+		newprefix := fmt.Sprintf("%s.", fullkey)
 		if dv, ok := dst[key]; ok && dv == nil {
 			delete(dst, key)
 		} else if !ok {
 			dst[key] = val
 		} else if istable(val) {
 			if istable(dv) {
-				CoalesceTables(dv.(map[string]interface{}), val.(map[string]interface{}))
+				coalesceTablesFullKey(dv.(map[string]interface{}), val.(map[string]interface{}), newprefix)
 			} else {
-				log.Printf("warning: cannot overwrite table with non table for %s (%v)", key, val)
+				log.Printf("warning: cannot overwrite table with non table for %s (%v)", fullkey, val)
 			}
 		} else if istable(dv) {
-			log.Printf("warning: destination for %s is a table. Ignoring non-table value %v", key, val)
+			log.Printf("warning: destination for %s is a table. Ignoring non-table value (%v)", fullkey, val)
 		}
 	}
 	return dst
